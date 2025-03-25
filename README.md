@@ -1,11 +1,23 @@
-# sysgenx-cublasdx-fenics
+# Experiments with cuBLASDx and FEniCS
 
-This repository contains experiments assembling simple matrix-free finite
-element kernels using CUBlasDX
+This repository contains experimental code for assembling simple matrix-free
+finite element kernels using GEMM functionality in
+[cuBLASDx](https://docs.nvidia.com/cuda/cublasdx/). Basix data structures are
+implemented using [DOLFINx](https://github.com/fenics/dolfinx). cuBLASDx allows
+for BLAS kernels to be called within a kernel - this allows for fusing linear
+algebra routines with other operations in a kernel, and even fusing linear
+algebra routines together.
+
+## Authors
+
+- Igor Baratta, NVIDIA Corporation.
+- Jack S. Hale, University of Luxembourg.
 
 ## Instructions
 
-### Building the Dockerfile
+### Building the docker image
+
+On the system
 
     export ENGINE=podman
     cd docker
@@ -16,15 +28,13 @@ element kernels using CUBlasDX
 
     ${ENGINE} run -v $(pwd):/shared -w /shared --rm -ti --device nvidia.com/gpu=0 jhale/sysgenx-cublasdx-fenics:latest
 
-### Downloading cuBLASDx
-
-    cd test_vector_add/
-    wget https://developer.download.nvidia.com/compute/cublasdx/redist/cublasdx/nvidia-mathdx-25.01.1.tar.gz
-    tar -xvf nvidia-mathdx-25.01.1.tar.gz 
-    
 ### Build and run test
+
+In the running container
 
     cd test_vector_add
     mkdir build
     cd build
     cmake ../
+    make
+    ./mass_example
