@@ -10,4 +10,6 @@
 ## Running a test
 
     ${ENGINE} run -v $(pwd):/shared -w /shared --rm -ti --device nvidia.com/gpu=0 jhale/sysgenx-cublasdx-fenics:latest
-     
+    mkdir build
+    cd build
+    cmake ../
