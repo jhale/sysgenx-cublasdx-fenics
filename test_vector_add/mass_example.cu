@@ -7,9 +7,9 @@
 
 using value_type = double;
 
-constexpr int P = 3;
+constexpr int P = 5;
 constexpr int num_dofs = (P + 1) * (P + 2)* (P + 3) / 6;
-constexpr int batch_size = 16;
+constexpr int batch_size = 64;
 
 constexpr int m = num_dofs;
 constexpr int n = batch_size;
@@ -27,7 +27,7 @@ __global__ void gemm_kernel_shared(const value_type* phi,
                                     size_t num_dofs) {
     extern __shared__ __align__(16) char smem[];
 
-    //     // Get block index
+    // Get block index
     const int block_idx = blockIdx.x;
 
     const size_t u_offset = block_idx * batch_size * num_dofs;
@@ -54,7 +54,6 @@ __global__ void gemm_kernel_shared(const value_type* phi,
     auto d_frag = partitioner.make_accumulator_fragment();
     cublasdx::copy_fragment<alignment::c>(c_tensor, d_frag, partitioner);
     cublasdx::axpby(alpha, c_frag, beta, d_frag);
-    
 
     // Copy result back to global memory
     auto out_global_tensor = cublasdx::make_tensor(output + c_offset, GEMM::get_layout_gmem_c());
@@ -62,7 +61,6 @@ __global__ void gemm_kernel_shared(const value_type* phi,
 }
 
 int main(int, char**) {
-    constexpr int block_size = 256;
     constexpr int Arch = 800;
     
     // GEMM definition using cuBLASDx operators
@@ -102,8 +100,10 @@ int main(int, char**) {
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
 
-    constexpr auto block_dim = 256;
-    constexpr auto grid_size = (global_c_size + block_dim - 1) / block_dim;
+    // Calculate grid and block dimensions
+    constexpr int block_dim = 256;  // Use the GEMM block size
+    constexpr int num_batches = (num_elements + batch_size - 1) / batch_size;
+    constexpr int grid_size = num_batches;
 
     // Record start event
     cudaEventRecord(start);
@@ -112,7 +112,16 @@ int main(int, char**) {
     gemm_kernel_shared<GEMM><<<grid_size, block_dim, cublasdx::get_shared_storage_size<GEMM>()>>>(
         a, b, c, 1.0, 0.0, c, num_dofs
     );
-    cudaPeekAtLastError();
+
+    // Check for kernel launch errors
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        std::cerr << "Kernel launch failed: " << cudaGetErrorString(err) << std::endl;
+        return 1;
+    }
+
+    // Synchronize to ensure kernel completes
+    cudaDeviceSynchronize();
 
     // Record stop event
     cudaEventRecord(stop);
@@ -127,6 +136,8 @@ int main(int, char**) {
     // Print timing information
     std::cout << "Kernel execution time: " << milliseconds << " ms" << std::endl;
     std::cout << "Throughput: " << (num_elements / (milliseconds / 1000.0)) << " elements/second" << std::endl;
+    std::cout << "Grid size: " << grid_size << ", Block size: " << block_dim << std::endl;
+    std::cout << "Number of batches: " << num_batches << std::endl;
 
     // Clean up CUDA events
     cudaEventDestroy(start);
