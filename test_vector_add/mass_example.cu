@@ -5,6 +5,8 @@
 #include <basix/finite-element.h>
 #include <basix/quadrature.h>
 
+#include <dolfinx.h>
+
 #include <cublasdx.hpp>
 #include <cuda_runtime_api.h>
 
@@ -66,9 +68,16 @@ __global__ void gemm_kernel_shared(const value_type* phi, const value_type* u,
   cublasdx::copy_fragment<alignment::c>(d_frag, out_global_tensor, partitioner);
 }
 
-int main(int, char**)
+int main(int argc, char* argv[])
 {
   constexpr int Arch = 700;
+
+  dolfinx::init_logging(argc, argv);
+  auto part = mesh::create_cell_partitioner(mesh::GhostMode::shared_facet);
+  auto mesh = std::make_shared<mesh::Mesh<value_type>>(
+      mesh::create_rectangle<value_type>(MPI_COMM_WORLD,
+                                         {{{0.0, 0.0}, {2.0, 1.0}}}, {32, 16},
+                                         mesh::CellType::triangle, part));
 
   // Tabulation of basis functions
   basix::FiniteElement element = basix::create_element<double>(
@@ -81,6 +90,10 @@ int main(int, char**)
       basix::polyset::type::standard, 2 * P);
 
   auto [phi, dphi] = element.tabulate(0, x, {weights.size(), 2});
+
+  auto V = std::make_shared<fem::FunctionSpace<value_type>>(
+      fem::create_functionspace<value_type>(
+          mesh, std::make_shared<fem::FiniteElement<value_type>>(element)));
 
   // GEMM definition using cuBLASDx operators
   using GEMM

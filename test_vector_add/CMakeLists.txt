@@ -3,7 +3,7 @@ project(sysgenx-cublasdx-fenics)
 include(FetchContent)
 
 # Enable CUDA
-enable_language(CUDA)
+enable_language(CXX CUDA)
 
 # Set CUDA standard
 set(CMAKE_CUDA_STANDARD 20)
@@ -21,11 +21,13 @@ FetchContent_MakeAvailable(nvidia-mathdx)
 find_package(mathdx REQUIRED COMPONENTS cublasdx CONFIG PATHS "${nvidia-mathdx_SOURCE_DIR}/nvidia/mathdx/25.01")
 
 find_package(Basix REQUIRED CONFIG)
+find_package(DOLFINX REQUIRED)
 
 add_executable(mass_example mass_example.cu)
 
+set_property(TARGET mass_example PROPERTY CXX_STANDARD 20)
 set_target_properties(mass_example PROPERTIES
     CUDA_ARCHITECTURES native
 )
 
-target_link_libraries(mass_example mathdx::cublasdx Basix::basix)
+target_link_libraries(mass_example mathdx::cublasdx Basix::basix dolfinx)
