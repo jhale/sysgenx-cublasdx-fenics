@@ -7,15 +7,15 @@
 
 using value_type = double;
 
-constexpr int P = 5;
-constexpr int num_dofs = (P + 1) * (P + 2)* (P + 3) / 6;
-constexpr int batch_size = 64;
+constexpr std::size_t P = 4;
+constexpr std::size_t num_dofs = (P + 1) * (P + 2)* (P + 3) / 6;
+constexpr std::size_t batch_size = 64;
 
-constexpr int m = num_dofs;
-constexpr int n = batch_size;
-constexpr int k = num_dofs;
+constexpr std::size_t m = num_dofs;
+constexpr std::size_t n = batch_size;
+constexpr std::size_t k = num_dofs;
 
-constexpr int num_elements = 1 << 20;
+constexpr std::size_t num_elements = 1 << 20;
 
 template<class GEMM>
 __global__ void gemm_kernel_shared(const value_type* phi,
