@@ -14,8 +14,9 @@ if(CUDA_SUPPORTS_SM_80)
     set(CMAKE_CUDA_ARCHITECTURES 80)
 else()
     message(WARNING "CUDA architecture detection failed. Using default architecture.")
-    set(CMAKE_CUDA_ARCHITECTURES 75)
+    set(CMAKE_CUDA_ARCHITECTURES 70)
 endif()
+set(CMAKE_CUDA_ARCHITECTURES 70)
 
 # Add executable
 add_executable(vector_add vector_add.cu)
