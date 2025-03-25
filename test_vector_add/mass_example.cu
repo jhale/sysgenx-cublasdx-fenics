@@ -109,9 +109,13 @@ int main(int, char**) {
     cudaEventRecord(start);
 
     // Launch kernel
-    gemm_kernel_shared<GEMM><<<grid_size, block_dim, cublasdx::get_shared_storage_size<GEMM>()>>>(
-        a, b, c, 1.0, 0.0, c, num_dofs
-    );
+
+    for (int i = 0; i < 10; ++i) {
+        gemm_kernel_shared<GEMM><<<grid_size, block_dim, cublasdx::get_shared_storage_size<GEMM>()>>>(
+            a, b, c, 1.0, 0.0, c, num_dofs
+        );
+        cudaDeviceSynchronize();
+    }
 
     // Check for kernel launch errors
     cudaError_t err = cudaGetLastError();
@@ -135,7 +139,7 @@ int main(int, char**) {
 
     // Print timing information
     std::cout << "Kernel execution time: " << milliseconds << " ms" << std::endl;
-    std::cout << "Throughput: " << (num_elements / (milliseconds / 1000.0)) << " elements/second" << std::endl;
+    std::cout << "Throughput: " << 10 * (3 * global_c_size * sizeof(value_type) / (milliseconds / 1000.0))/1e9 << " GB/s" << std::endl;
     std::cout << "Grid size: " << grid_size << ", Block size: " << block_dim << std::endl;
     std::cout << "Number of batches: " << num_batches << std::endl;
 
