@@ -6,8 +6,12 @@ include(FetchContent)
 enable_language(CUDA)
 
 # Set CUDA standard
-set(CMAKE_CUDA_STANDARD 14)
+set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_EXTENSIONS OFF)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xfatbin -compress-all") # Compress all fatbins
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcudafe --display_error_number --expt-relaxed-constexpr") # Show error/warning numbers
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler \"${CUBLASDX_CUDA_CXX_FLAGS}\"")
 
 FetchContent_Declare(nvidia-mathdx
     URL https://developer.download.nvidia.com/compute/cublasdx/redist/cublasdx/nvidia-mathdx-25.01.1.tar.gz
@@ -16,12 +20,12 @@ FetchContent_Declare(nvidia-mathdx
 FetchContent_MakeAvailable(nvidia-mathdx)
 find_package(mathdx REQUIRED COMPONENTS cublasdx CONFIG PATHS "${nvidia-mathdx_SOURCE_DIR}/nvidia/mathdx/25.01")
 
-# Add executable
+find_package(Basix REQUIRED CONFIG)
+
 add_executable(mass_example mass_example.cu)
 
-# Set CUDA architecture
 set_target_properties(mass_example PROPERTIES
     CUDA_ARCHITECTURES native
 )
 
-target_link_libraries(mass_example mathdx::cublasdx)
+target_link_libraries(mass_example mathdx::cublasdx Basix::basix)

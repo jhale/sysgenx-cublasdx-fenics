@@ -2,6 +2,8 @@
 #include <vector>
 #include <chrono>
 
+#include <basix/finite-element.h>
+
 #include <cuda_runtime_api.h>
 #include <cublasdx.hpp>
 
@@ -61,7 +63,9 @@ __global__ void gemm_kernel_shared(const value_type* phi,
 }
 
 int main(int, char**) {
-    constexpr int Arch = 800;
+    constexpr int Arch = 700;
+
+    // Tabulation of basis functions
     
     // GEMM definition using cuBLASDx operators
     using GEMM = decltype(cublasdx::Size<m, n, k>()
@@ -69,7 +73,7 @@ int main(int, char**) {
                   + cublasdx::Type<cublasdx::type::real>()
                   + cublasdx::Arrangement<cublasdx::row_major, cublasdx::col_major>()
                   + cublasdx::Function<cublasdx::function::MM>()
-                  + cublasdx::SM<700>()
+                  + cublasdx::SM<Arch>()
                   + cublasdx::Block()
                   + cublasdx::BlockDim<256>());
 
