@@ -10,6 +10,7 @@
 ## Running a test
 
     ${ENGINE} run -v $(pwd):/shared -w /shared --rm -ti --device nvidia.com/gpu=0 jhale/sysgenx-cublasdx-fenics:latest
+    cd test_vector_add
     mkdir build
     cd build
     cmake ../
