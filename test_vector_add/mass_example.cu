@@ -3,6 +3,7 @@
 #include <vector>
 
 #include <basix/finite-element.h>
+#include <basix/quadrature.h>
 
 #include <cublasdx.hpp>
 #include <cuda_runtime_api.h>
@@ -70,10 +71,16 @@ int main(int, char**)
   constexpr int Arch = 700;
 
   // Tabulation of basis functions
-  auto element = basix::create_element<double>(
+  basix::FiniteElement element = basix::create_element<double>(
       basix::element::family::P, basix::cell::type::triangle, P,
       basix::element::lagrange_variant::equispaced,
-      basix::element::dpc_variant::simplex_equispaced, false);
+      basix::element::dpc_variant::unset, false);
+
+  auto [x, weights] = basix::quadrature::make_quadrature<double>(
+      basix::quadrature::type::Default, basix::cell::type::triangle,
+      basix::polyset::type::standard, 2 * P);
+
+  auto [phi, dphi] = element.tabulate(0, x, {weights.size(), 2});
 
   // GEMM definition using cuBLASDx operators
   using GEMM
