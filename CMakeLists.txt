@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
+project(sysgenx-cublasdx-fenics)
 
 # Enable CUDA
 enable_language(CUDA)
