@@ -1,5 +1,6 @@
 #include <iostream>
 #include <vector>
+#include <chrono>
 
 #include <cuda_runtime_api.h>
 #include <cublasdx.hpp>
@@ -14,7 +15,7 @@ constexpr int m = num_dofs;
 constexpr int n = batch_size;
 constexpr int k = num_dofs;
 
-constexpr int num_elements = 16 * 16 * 16;
+constexpr int num_elements = 1 << 20;
 
 template<class GEMM>
 __global__ void gemm_kernel_shared(const value_type* phi,
@@ -53,13 +54,12 @@ __global__ void gemm_kernel_shared(const value_type* phi,
     auto d_frag = partitioner.make_accumulator_fragment();
     cublasdx::copy_fragment<alignment::c>(c_tensor, d_frag, partitioner);
     cublasdx::axpby(alpha, c_frag, beta, d_frag);
+    
 
     // Copy result back to global memory
     auto out_global_tensor = cublasdx::make_tensor(output + c_offset, GEMM::get_layout_gmem_c());
     cublasdx::copy_fragment<alignment::c>(d_frag, out_global_tensor, partitioner);
 }
-
-
 
 int main(int, char**) {
     constexpr int block_size = 256;
@@ -75,13 +75,11 @@ int main(int, char**) {
                   + cublasdx::Block()
                   + cublasdx::BlockDim<256>());
 
-
     constexpr auto global_a_size = m * k;
     constexpr auto global_b_size = num_elements * k * n;
     constexpr auto global_c_size = num_elements * m * n;
 
     // U = phi^T * phi * U
-
 
     value_type* a;
     value_type* b;
@@ -99,20 +97,45 @@ int main(int, char**) {
         b[i] = static_cast<value_type>(1);
     }
 
+    // Create CUDA events for timing
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
     constexpr auto block_dim = 256;
     constexpr auto grid_size = (global_c_size + block_dim - 1) / block_dim;
+
+    // Record start event
+    cudaEventRecord(start);
+
+    // Launch kernel
     gemm_kernel_shared<GEMM><<<grid_size, block_dim, cublasdx::get_shared_storage_size<GEMM>()>>>(
         a, b, c, 1.0, 0.0, c, num_dofs
     );
     cudaPeekAtLastError();
 
-    cudaDeviceSynchronize();
+    // Record stop event
+    cudaEventRecord(stop);
 
-    // Print results
-    for (int i = 0; i < global_c_size; ++i) {
-        std::cout << c[i] << " ";
-    }
-    std::cout << std::endl;
+    // Synchronize to ensure timing is accurate
+    cudaEventSynchronize(stop);
+
+    // Calculate elapsed time
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+
+    // Print timing information
+    std::cout << "Kernel execution time: " << milliseconds << " ms" << std::endl;
+    std::cout << "Throughput: " << (num_elements / (milliseconds / 1000.0)) << " elements/second" << std::endl;
+
+    // Clean up CUDA events
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+
+    // Clean up memory
+    cudaFree(a);
+    cudaFree(b);
+    cudaFree(c);
 
     return 0;
 }
