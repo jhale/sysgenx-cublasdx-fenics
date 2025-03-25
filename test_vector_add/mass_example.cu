@@ -9,7 +9,7 @@
 
 using value_type = double;
 
-constexpr std::size_t P = 4;
+constexpr int P = 4;
 constexpr std::size_t num_dofs = (P + 1) * (P + 2)* (P + 3) / 6;
 constexpr std::size_t batch_size = 64;
 
@@ -66,6 +66,7 @@ int main(int, char**) {
     constexpr int Arch = 700;
 
     // Tabulation of basis functions
+    auto element = basix::create_element<double>(basix::element::family::P, basix::cell::type::triangle, P, basix::element::lagrange_variant::equispaced, basix::element::dpc_variant::simplex_equispaced, false);
     
     // GEMM definition using cuBLASDx operators
     using GEMM = decltype(cublasdx::Size<m, n, k>()
