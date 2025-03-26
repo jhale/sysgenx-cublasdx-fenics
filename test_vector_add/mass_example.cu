@@ -106,7 +106,7 @@ int main(int argc, char* argv[])
         basix::quadrature::type::Default, basix::cell::type::tetrahedron,
         basix::polyset::type::standard, 2 * P);
 
-    auto [table, shape] = element.tabulate(1, points, {weights.size(), 3});
+    auto [table, shape] = element.tabulate(1, x, {weights.size(), 3});
 
     auto V
         = std::make_shared<fem::FunctionSpace<T>>(fem::create_functionspace<T>(
@@ -141,7 +141,7 @@ int main(int argc, char* argv[])
 
     auto transpose = cublasdx::Arrangement<cublasdx::arrangement::col_major,
                                            cublasdx::arrangement::row_major,
-                                           cublasdx::arrangement::col_major>();
+                                           cublasdx::arrangement::row_major>();
     using GEMM_T = decltype(size + precision + type + transpose + function + sm
                             + block + block_dim);
 
@@ -181,7 +181,7 @@ int main(int argc, char* argv[])
 
     for (int i = 0; i < u_size; ++i)
     {
-      u[i] = u_function->vector()->mutable_array()[dof_indices[i]];
+      u[i] = u_function->x()->mutable_array()[dof_indices[i]];
     }
 
     // Create CUDA events for timing
