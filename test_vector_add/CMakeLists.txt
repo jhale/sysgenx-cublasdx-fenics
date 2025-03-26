@@ -1,9 +1,6 @@
 cmake_minimum_required(VERSION 3.8)
-project(sysgenx-cublasdx-fenics)
+project(sysgenx-cublasdx-fenics C CXX CUDA)
 include(FetchContent)
-
-# Enable CUDA
-enable_language(CXX CUDA)
 
 # Set CUDA standard
 set(CMAKE_CUDA_STANDARD 20)
@@ -12,6 +9,7 @@ set(CMAKE_CUDA_EXTENSIONS OFF)
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xfatbin -compress-all") # Compress all fatbins
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcudafe --display_error_number --expt-relaxed-constexpr") # Show error/warning numbers
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler \"${CUBLASDX_CUDA_CXX_FLAGS}\"")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 -DNDEBUG --extended-lambda --expt-relaxed-constexpr")
 
 FetchContent_Declare(nvidia-mathdx
     URL https://developer.download.nvidia.com/compute/cublasdx/redist/cublasdx/nvidia-mathdx-25.01.1.tar.gz
