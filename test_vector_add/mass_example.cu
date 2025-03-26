@@ -24,7 +24,7 @@ constexpr std::size_t num_elements = 1 << 20;
 template <class GEMM, class GEMM_T>
 __global__ void gemm_kernel_shared(const T* phi, const T* u,
                                    const T* c, const T* detJ,
-                                   const T beta, T* output,
+                                   T* output,
                                    size_t num_dofs)
 {
   extern __shared__ __align__(16) char smem[];
@@ -43,7 +43,7 @@ __global__ void gemm_kernel_shared(const T* phi, const T* u,
   auto u_tensor  = cublasdx::make_tensor(u + u_offset, GEMM::get_layout_gmem_b());
   auto c_tensor = cublasdx::make_tensor(c + c_offset, GEMM::get_layout_gmem_c());
 
-  auto [smem_a, smem_b] = cublasdx::slice_shared_memory_ab<GEMM>(smem);
+  auto [smem_a, smem_b, smem_c] = cublasdx::slice_shared_memory<GEMM>(smem);
   auto a_shared_tensor = cublasdx::make_tensor(smem_a, GEMM::get_layout_smem_a());
   auto b_shared_tensor = cublasdx::make_tensor(smem_b, GEMM::get_layout_smem_b());
   auto c_shared_tensor = cublasdx::make_tensor(smem_c, GEMM::get_layout_smem_c());
@@ -155,9 +155,13 @@ int main(int argc, char* argv[])
     }
 
 
+    // Copy u coefficients to device
+    std::shared_ptr dofmap = V->dofmap();
+    auto dof_indices = dofmap->dof_indices();
+
     for (int i = 0; i < u_size; ++i)
     {
-      u[i] = static_cast<T>(1); // TODO: interpolate something from u_function
+      u[i] = u_function->vector()->mutable_array()[dof_indices[i]];
     }
 
 
@@ -178,8 +182,8 @@ int main(int argc, char* argv[])
 
     for (int i = 0; i < 10; ++i)
     {
-      gemm_kernel_shared<GEMM><<<grid_size, block_dim, cublasdx::get_shared_storage_size<GEMM>()>>>(
-              a, b, c, 1.0, 0.0, c, num_dofs);
+      gemm_kernel_shared<GEMM, GEMM_T><<<grid_size, block_dim, cublasdx::get_shared_storage_size<GEMM>()>>>(
+        phi, u, c, detJ, c, u_size);
       cudaDeviceSynchronize();
     }
 
