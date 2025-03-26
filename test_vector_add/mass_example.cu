@@ -10,12 +10,11 @@
 #include <cublasdx.hpp>
 #include <cuda_runtime_api.h>
 
-using value_type = double;
+using T = double;
 
 constexpr int P = 4;
 constexpr std::size_t num_dofs = (P + 1) * (P + 2) * (P + 3) / 6;
 constexpr std::size_t batch_size = 64;
-
 constexpr std::size_t m = num_dofs;
 constexpr std::size_t n = batch_size;
 constexpr std::size_t k = num_dofs;
@@ -23,9 +22,9 @@ constexpr std::size_t k = num_dofs;
 constexpr std::size_t num_elements = 1 << 20;
 
 template <class GEMM>
-__global__ void gemm_kernel_shared(const value_type* phi, const value_type* u,
-                                   const value_type* c, const value_type alpha,
-                                   const value_type beta, value_type* output,
+__global__ void gemm_kernel_shared(const T* phi, const T* u,
+                                   const T* c, const T alpha,
+                                   const T beta, T* output,
                                    size_t num_dofs)
 {
   extern __shared__ __align__(16) char smem[];
@@ -37,16 +36,12 @@ __global__ void gemm_kernel_shared(const value_type* phi, const value_type* u,
   const size_t c_offset = block_idx * batch_size * num_dofs;
 
   auto phi_tensor = cublasdx::make_tensor(phi, GEMM::get_layout_gmem_a());
-  auto u_tensor
-      = cublasdx::make_tensor(u + u_offset, GEMM::get_layout_gmem_b());
-  auto c_tensor
-      = cublasdx::make_tensor(c + c_offset, GEMM::get_layout_gmem_c());
+  auto u_tensor  = cublasdx::make_tensor(u + u_offset, GEMM::get_layout_gmem_b());
+  auto c_tensor = cublasdx::make_tensor(c + c_offset, GEMM::get_layout_gmem_c());
 
   auto [smem_a, smem_b] = cublasdx::slice_shared_memory_ab<GEMM>(smem);
-  auto a_shared_tensor
-      = cublasdx::make_tensor(smem_a, GEMM::get_layout_smem_a());
-  auto b_shared_tensor
-      = cublasdx::make_tensor(smem_b, GEMM::get_layout_smem_b());
+  auto a_shared_tensor = cublasdx::make_tensor(smem_a, GEMM::get_layout_smem_a());
+  auto b_shared_tensor = cublasdx::make_tensor(smem_b, GEMM::get_layout_smem_b());
 
   using alignment = cublasdx::alignment_of<GEMM>;
 
@@ -63,137 +58,142 @@ __global__ void gemm_kernel_shared(const value_type* phi, const value_type* u,
   cublasdx::axpby(alpha, c_frag, beta, d_frag);
 
   // Copy result back to global memory
-  auto out_global_tensor
-      = cublasdx::make_tensor(output + c_offset, GEMM::get_layout_gmem_c());
+  auto out_global_tensor = cublasdx::make_tensor(output + c_offset, GEMM::get_layout_gmem_c());
   cublasdx::copy_fragment<alignment::c>(d_frag, out_global_tensor, partitioner);
 }
 
 int main(int argc, char* argv[])
 {
-  constexpr int Arch = 700;
-
-  dolfinx::init_logging(argc, argv);
-  auto part = mesh::create_cell_partitioner(mesh::GhostMode::shared_facet);
-  auto mesh = std::make_shared<mesh::Mesh<value_type>>(
-      mesh::create_rectangle<value_type>(MPI_COMM_WORLD,
-                                         {{{0.0, 0.0}, {2.0, 1.0}}}, {32, 16},
-                                         mesh::CellType::triangle, part));
-
-  // Tabulation of basis functions
-  basix::FiniteElement element = basix::create_element<double>(
-      basix::element::family::P, basix::cell::type::triangle, P,
-      basix::element::lagrange_variant::equispaced,
-      basix::element::dpc_variant::unset, false);
-
-  auto [x, weights] = basix::quadrature::make_quadrature<double>(
-      basix::quadrature::type::Default, basix::cell::type::triangle,
-      basix::polyset::type::standard, 2 * P);
-
-  auto [phi, dphi] = element.tabulate(0, x, {weights.size(), 2});
-
-  auto V = std::make_shared<fem::FunctionSpace<value_type>>(
-      fem::create_functionspace<value_type>(
-          mesh, std::make_shared<fem::FiniteElement<value_type>>(element)));
-
-  // GEMM definition using cuBLASDx operators
-  using GEMM
-      = decltype(cublasdx::Size<m, n, k>() + cublasdx::Precision<value_type>()
-                 + cublasdx::Type<cublasdx::type::real>()
-                 + cublasdx::Arrangement<cublasdx::row_major,
-                                         cublasdx::col_major>()
-                 + cublasdx::Function<cublasdx::function::MM>()
-                 + cublasdx::SM<Arch>() + cublasdx::Block()
-                 + cublasdx::BlockDim<256>());
-
-  constexpr auto global_a_size = m * k;
-  constexpr auto global_b_size = num_elements * k * n;
-  constexpr auto global_c_size = num_elements * m * n;
-
-  // U = phi^T * phi * U
-
-  value_type* a;
-  value_type* b;
-  value_type* c;
-
-  cudaMallocManaged(&a, global_a_size * sizeof(value_type));
-  cudaMallocManaged(&b, global_b_size * sizeof(value_type));
-  cudaMallocManaged(&c, global_c_size * sizeof(value_type));
-
-  // Initialize matrices
-  for (int i = 0; i < global_a_size; ++i)
   {
-    a[i] = static_cast<value_type>(1);
-  }
-  for (int i = 0; i < global_b_size; ++i)
-  {
-    b[i] = static_cast<value_type>(1);
-  }
+    MPI_Init(&argc, &argv);
+    [[maybe_unused]] constexpr int Arch = 700;
 
-  // Create CUDA events for timing
-  cudaEvent_t start, stop;
-  cudaEventCreate(&start);
-  cudaEventCreate(&stop);
+    dolfinx::init_logging(argc, argv);
+    auto part = mesh::create_cell_partitioner(mesh::GhostMode::shared_facet);
+    auto mesh = std::make_shared<mesh::Mesh<T>>(
+        mesh::create_box<T>(MPI_COMM_WORLD,
+                                    {{{0.0, 0.0, 0.0}, {1.0, 1.0, 1.0}}},
+                                    {32, 32, 32}, mesh::CellType::hexahedron,
+                                    part));
 
-  // Calculate grid and block dimensions
-  constexpr int block_dim = 256; // Use the GEMM block size
-  constexpr int num_batches = (num_elements + batch_size - 1) / batch_size;
-  constexpr int grid_size = num_batches;
+    // Tabulation of basis functions
+    basix::FiniteElement element = basix::create_element<T>(
+        basix::element::family::P, basix::cell::type::tetrahedron, P,
+        basix::element::lagrange_variant::equispaced,
+        basix::element::dpc_variant::unset, false);
 
-  // Record start event
-  cudaEventRecord(start);
+    auto [x, weights] = basix::quadrature::make_quadrature<T>(
+        basix::quadrature::type::Default, basix::cell::type::tetrahedron,
+        basix::polyset::type::standard, 2 * P);
+    
+    auto [table, shape] = element.tabulate(1, points, {weights.size(), 3});
 
-  // Launch kernel
 
-  for (int i = 0; i < 10; ++i)
-  {
-    gemm_kernel_shared<GEMM>
-        <<<grid_size, block_dim, cublasdx::get_shared_storage_size<GEMM>()>>>(
-            a, b, c, 1.0, 0.0, c, num_dofs);
+    auto V = std::make_shared<fem::FunctionSpace<T>>(
+        fem::create_functionspace<T>(
+            mesh, std::make_shared<fem::FiniteElement<T>>(element)));
+
+    // GEMM definition using cuBLASDx operators
+    using GEMM
+        = decltype(cublasdx::Size<m, n, k>() + cublasdx::Precision<T>()
+                   + cublasdx::Type<cublasdx::type::real>()
+                   + cublasdx::Arrangement<cublasdx::row_major,
+                                           cublasdx::col_major>()
+                   + cublasdx::Function<cublasdx::function::MM>()
+                   + cublasdx::SM<Arch>() + cublasdx::Block()
+                   + cublasdx::BlockDim<256>());
+
+    constexpr auto global_a_size = m * k;
+    constexpr auto global_b_size = num_elements * k * n;
+    constexpr auto global_c_size = num_elements * m * n;
+
+    // U = phi^T * phi * U
+
+    T* a;
+    T* b;
+    T* c;
+
+    cudaMallocManaged(&a, global_a_size * sizeof(T));
+    cudaMallocManaged(&b, global_b_size * sizeof(T));
+    cudaMallocManaged(&c, global_c_size * sizeof(T));
+
+    // Initialize matrices
+    for (int i = 0; i < global_a_size; ++i)
+    {
+      a[i] = static_cast<T>(1);
+    }
+    for (int i = 0; i < global_b_size; ++i)
+    {
+      b[i] = static_cast<T>(1);
+    }
+
+    // Create CUDA events for timing
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    // Calculate grid and block dimensions
+    constexpr int block_dim = 256; // Use the GEMM block size
+    constexpr int num_batches = (num_elements + batch_size - 1) / batch_size;
+    constexpr int grid_size = num_batches;
+
+    // Record start event
+    cudaEventRecord(start);
+
+    // Launch kernel
+
+    for (int i = 0; i < 10; ++i)
+    {
+      gemm_kernel_shared<GEMM>
+          <<<grid_size, block_dim, cublasdx::get_shared_storage_size<GEMM>()>>>(
+              a, b, c, 1.0, 0.0, c, num_dofs);
+      cudaDeviceSynchronize();
+    }
+
+    // Check for kernel launch errors
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess)
+    {
+      std::cerr << "Kernel launch failed: " << cudaGetErrorString(err)
+                << std::endl;
+      return 1;
+    }
+
+    // Synchronize to ensure kernel completes
     cudaDeviceSynchronize();
-  }
 
-  // Check for kernel launch errors
-  cudaError_t err = cudaGetLastError();
-  if (err != cudaSuccess)
-  {
-    std::cerr << "Kernel launch failed: " << cudaGetErrorString(err)
+    // Record stop event
+    cudaEventRecord(stop);
+
+    // Synchronize to ensure timing is accurate
+    cudaEventSynchronize(stop);
+
+    // Calculate elapsed time
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+
+    // Print timing information
+    std::cout << "Kernel execution time: " << milliseconds << " ms" << std::endl;
+    std::cout << "Throughput: "
+              << 10
+                     * (3 * global_c_size * sizeof(T)
+                        / (milliseconds / 1000.0))
+                     / 1e9
+              << " GB/s" << std::endl;
+    std::cout << "Grid size: " << grid_size << ", Block size: " << block_dim
               << std::endl;
-    return 1;
+    std::cout << "Number of batches: " << num_batches << std::endl;
+
+    // Clean up CUDA events
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+
+    // Clean up memory
+    cudaFree(a);
+    cudaFree(b);
+    cudaFree(c);
   }
 
-  // Synchronize to ensure kernel completes
-  cudaDeviceSynchronize();
-
-  // Record stop event
-  cudaEventRecord(stop);
-
-  // Synchronize to ensure timing is accurate
-  cudaEventSynchronize(stop);
-
-  // Calculate elapsed time
-  float milliseconds = 0;
-  cudaEventElapsedTime(&milliseconds, start, stop);
-
-  // Print timing information
-  std::cout << "Kernel execution time: " << milliseconds << " ms" << std::endl;
-  std::cout << "Throughput: "
-            << 10
-                   * (3 * global_c_size * sizeof(value_type)
-                      / (milliseconds / 1000.0))
-                   / 1e9
-            << " GB/s" << std::endl;
-  std::cout << "Grid size: " << grid_size << ", Block size: " << block_dim
-            << std::endl;
-  std::cout << "Number of batches: " << num_batches << std::endl;
-
-  // Clean up CUDA events
-  cudaEventDestroy(start);
-  cudaEventDestroy(stop);
-
-  // Clean up memory
-  cudaFree(a);
-  cudaFree(b);
-  cudaFree(c);
-
+  MPI_Finalize();
   return 0;
 }
