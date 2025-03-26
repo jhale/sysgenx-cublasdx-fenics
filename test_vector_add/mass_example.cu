@@ -94,7 +94,7 @@ int main(int argc, char* argv[])
     auto part = mesh::create_cell_partitioner(mesh::GhostMode::shared_facet);
     auto mesh = std::make_shared<mesh::Mesh<T>>(mesh::create_box<T>(
         MPI_COMM_WORLD, {{{0.0, 0.0, 0.0}, {1.0, 1.0, 1.0}}}, {32, 32, 32},
-        mesh::CellType::hexahedron, part));
+        mesh::CellType::tetrahedron, part));
 
     // Tabulation of basis functions
     basix::FiniteElement element = basix::create_element<T>(
@@ -106,7 +106,7 @@ int main(int argc, char* argv[])
         basix::quadrature::type::Default, basix::cell::type::tetrahedron,
         basix::polyset::type::standard, 2 * P);
 
-    auto [table, shape] = element.tabulate(1, points, {weights.size(), 3});
+    auto [table, shape] = element.tabulate(1, x, {weights.size(), 3});
 
     auto V
         = std::make_shared<fem::FunctionSpace<T>>(fem::create_functionspace<T>(
@@ -134,7 +134,8 @@ int main(int argc, char* argv[])
     auto function = cublasdx::Function<cublasdx::function::MM>();
     auto sm = cublasdx::SM<Arch>();
     auto block = cublasdx::Block();
-    auto block_dim = cublasdx::BlockDim<256>();
+    constexpr int block_size = 256;
+    auto block_dim = cublasdx::BlockDim<block_size>();
 
     using GEMM = decltype(size + precision + type + arrangement + function + sm
                           + block + block_dim);
@@ -177,11 +178,15 @@ int main(int argc, char* argv[])
 
     // Copy u coefficients to device
     std::shared_ptr dofmap = V->dofmap();
-    auto [dof_indices, unrolled] = dofmap->dof_indices();
+    
 
-    for (int i = 0; i < u_size; ++i)
+    for (int i = 0; i < num_elements; ++i)
     {
-      u[i] = u_function->vector()->mutable_array()[dof_indices[i]];
+      auto dof_indices = dofmap->cell_dofs(i);
+      for (auto dof : dof_indices)
+      {
+        u[i] = u_function->x()->mutable_array()[dof];
+      }
     }
 
     // Create CUDA events for timing
@@ -190,7 +195,6 @@ int main(int argc, char* argv[])
     cudaEventCreate(&stop);
 
     // Calculate grid and block dimensions
-    constexpr int block_dim = 256; // Use the GEMM block size
     constexpr int num_batches = (num_elements + batch_size - 1) / batch_size;
     constexpr int grid_size = num_batches;
 
@@ -198,11 +202,10 @@ int main(int argc, char* argv[])
     cudaEventRecord(start);
 
     // Launch kernel
-
     for (int i = 0; i < 10; ++i)
     {
       gemm_kernel_shared<GEMM, GEMM_T>
-          <<<grid_size, block_dim, cublasdx::get_shared_storage_size<GEMM>()>>>(
+          <<<grid_size, block_size, cublasdx::get_shared_storage_size<GEMM>()>>>(
               phi, u, c, detJ, c, u_size);
       cudaDeviceSynchronize();
     }
@@ -236,7 +239,7 @@ int main(int argc, char* argv[])
               << 10 * (3 * global_c_size * sizeof(T) / (milliseconds / 1000.0))
                      / 1e9
               << " GB/s" << std::endl;
-    std::cout << "Grid size: " << grid_size << ", Block size: " << block_dim
+    std::cout << "Grid size: " << grid_size << ", Block size: " << block_size
               << std::endl;
     std::cout << "Number of batches: " << num_batches << std::endl;
 
