@@ -142,7 +142,7 @@ int main(int argc, char* argv[])
 
     auto transpose = cublasdx::Arrangement<cublasdx::arrangement::col_major,
                                            cublasdx::arrangement::row_major,
-                                           cublasdx::arrangement::col_major>();
+                                           cublasdx::arrangement::row_major>();
     using GEMM_T = decltype(size + precision + type + transpose + function + sm
                             + block + block_dim);
 
@@ -187,6 +187,7 @@ int main(int argc, char* argv[])
       {
         u[i] = u_function->x()->mutable_array()[dof];
       }
+      u[i] = u_function->x()->mutable_array()[dof_indices[i]];
     }
 
     // Create CUDA events for timing
