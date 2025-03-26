@@ -21,9 +21,9 @@ constexpr std::size_t k = num_dofs;
 
 constexpr std::size_t num_elements = 1 << 20;
 
-template <class GEMM>
+template <class GEMM, class GEMM_T>
 __global__ void gemm_kernel_shared(const T* phi, const T* u,
-                                   const T* c, const T alpha,
+                                   const T* c, const T* detJ,
                                    const T beta, T* output,
                                    size_t num_dofs)
 {
@@ -31,10 +31,14 @@ __global__ void gemm_kernel_shared(const T* phi, const T* u,
 
   // Get block index
   const int block_idx = blockIdx.x;
+  const int thread_idx = threadIdx.x;
 
   const size_t u_offset = block_idx * batch_size * num_dofs;
   const size_t c_offset = block_idx * batch_size * num_dofs;
+  const size_t detJ_offset = block_idx * batch_size * num_quadrature_points;
 
+
+  //  Copy tensors to shared memory
   auto phi_tensor = cublasdx::make_tensor(phi, GEMM::get_layout_gmem_a());
   auto u_tensor  = cublasdx::make_tensor(u + u_offset, GEMM::get_layout_gmem_b());
   auto c_tensor = cublasdx::make_tensor(c + c_offset, GEMM::get_layout_gmem_c());
@@ -42,6 +46,7 @@ __global__ void gemm_kernel_shared(const T* phi, const T* u,
   auto [smem_a, smem_b] = cublasdx::slice_shared_memory_ab<GEMM>(smem);
   auto a_shared_tensor = cublasdx::make_tensor(smem_a, GEMM::get_layout_smem_a());
   auto b_shared_tensor = cublasdx::make_tensor(smem_b, GEMM::get_layout_smem_b());
+  auto c_shared_tensor = cublasdx::make_tensor(smem_c, GEMM::get_layout_smem_c());
 
   using alignment = cublasdx::alignment_of<GEMM>;
 
@@ -50,16 +55,25 @@ __global__ void gemm_kernel_shared(const T* phi, const T* u,
   cublasdx::copy<GEMM, alignment::b>(u_tensor, b_shared_tensor);
   cublasdx::copy_wait();
 
-  auto [c_frag, partitioner] = GEMM().execute(a_shared_tensor, b_shared_tensor);
+  T alpha1 = 1.0;
+  T beta1 = 0.0;
+  GEMM().execute(alpha1, a_shared_tensor, b_shared_tensor, beta1, c_shared_tensor);
 
-  // Second GEMM: phi^T * (phi * U)
-  auto d_frag = partitioner.make_accumulator_fragment();
-  cublasdx::copy_fragment<alignment::c>(c_tensor, d_frag, partitioner);
-  cublasdx::axpby(alpha, c_frag, beta, d_frag);
+  //  Scale by Jacobian determinant
+  for (int i = thread_idx; i < num_quadrature_points * batch_size; i += blockDim.x)
+  {
+    c_shared_tensor[i] = c_shared_tensor[i] * detJ[i];
+  }
+
+  __syncthreads();
+
+  T alpha1 = 1.0;
+  T beta1 = 0.0;
+  GEMM_T().execute(alpha1, a_shared_tensor, c_shared_tensor, beta1, b_shared_tensor);
 
   // Copy result back to global memory
   auto out_global_tensor = cublasdx::make_tensor(output + c_offset, GEMM::get_layout_gmem_c());
-  cublasdx::copy_fragment<alignment::c>(d_frag, out_global_tensor, partitioner);
+  cublasdx::copy<GEMM, alignment::c>(b_shared_tensor, out_global_tensor);
 }
 
 int main(int argc, char* argv[])
@@ -85,47 +99,67 @@ int main(int argc, char* argv[])
     auto [x, weights] = basix::quadrature::make_quadrature<T>(
         basix::quadrature::type::Default, basix::cell::type::tetrahedron,
         basix::polyset::type::standard, 2 * P);
-    
-    auto [table, shape] = element.tabulate(1, points, {weights.size(), 3});
 
+    
+    auto [table,  ] = element.tabulate(1, points, {weights.size(), 3});
 
     auto V = std::make_shared<fem::FunctionSpace<T>>(
         fem::create_functionspace<T>(
             mesh, std::make_shared<fem::FiniteElement<T>>(element)));
 
-    // GEMM definition using cuBLASDx operators
-    using GEMM
-        = decltype(cublasdx::Size<m, n, k>() + cublasdx::Precision<T>()
-                   + cublasdx::Type<cublasdx::type::real>()
-                   + cublasdx::Arrangement<cublasdx::row_major,
-                                           cublasdx::col_major>()
-                   + cublasdx::Function<cublasdx::function::MM>()
-                   + cublasdx::SM<Arch>() + cublasdx::Block()
-                   + cublasdx::BlockDim<256>());
+    auto u_function = std::make_shared<fem::Function<T>>(V);
+    u_function->interpolate([](auto x) { return x[0] + x[1] + x[2]; });
 
-    constexpr auto global_a_size = m * k;
-    constexpr auto global_b_size = num_elements * k * n;
-    constexpr auto global_c_size = num_elements * m * n;
 
-    // U = phi^T * phi * U
+    auto arrangement = cublasdx::Arrangement<cublasdx::row_major, cublasdx::row_major, cublasdx::row_major>();
+    auto size = cublasdx::Size<m, n, k>();
+    auto precision = cublasdx::Precision<T>();
+    auto type = cublasdx::Type<cublasdx::type::real>();
+    auto function = cublasdx::Function<cublasdx::function::MM>();
+    auto sm = cublasdx::SM<Arch>();
+    auto block = cublasdx::Block();
+    auto block_dim = cublasdx::BlockDim<256>();
 
-    T* a;
-    T* b;
-    T* c;
+    using GEMM = decltype(size + precision + type + arrangement + function + sm + block + block_dim);
 
-    cudaMallocManaged(&a, global_a_size * sizeof(T));
-    cudaMallocManaged(&b, global_b_size * sizeof(T));
+    auto transpose = cublasdx::Transpose<cublasdx::transpose::transposed, cublasdx::transpose::transposed, cublasdx::transpose::transposed>();
+    using GEMM_T = decltype(size + precision + type + arrangement + function + sm + block + block_dim + transpose);
+
+    // Allocate memory
+    constexpr auto num_quadrature_points = num_dofs;
+    constexpr auto phi_size = num_elements * num_quadrature_points; // Batch size
+    constexpr auto u_size = num_elements * num_dofs;
+    constexpr auto global_c_size = num_elements * num_dofs;
+    constexpr auto detJ_size = num_elements * num_quadrature_points;
+
+    T* phi;   // basis functions
+    T* u;     // coefficients DG style
+    T* detJ;  // Jacobian determinant
+    T* c;     // result
+
+    cudaMallocManaged(&phi, phi_size * sizeof(T));
+    cudaMallocManaged(&u, u_size * sizeof(T));
     cudaMallocManaged(&c, global_c_size * sizeof(T));
+    cudaMallocManaged(&detJ, detJ_size * sizeof(T));
 
-    // Initialize matrices
-    for (int i = 0; i < global_a_size; ++i)
+    // Initialize phi with basis functions
+    for (int i = 0; i < phi_size; ++i)
     {
-      a[i] = static_cast<T>(1);
+      phi[i] = table[i];
     }
-    for (int i = 0; i < global_b_size; ++i)
+
+    // Initialize detJ with Jacobian determinant (Assumed to be 1 for now)
+    for (int i = 0; i < detJ_size; ++i)
     {
-      b[i] = static_cast<T>(1);
+      detJ[i] = 1.0; // TODO: compute
     }
+
+
+    for (int i = 0; i < u_size; ++i)
+    {
+      u[i] = static_cast<T>(1); // TODO: interpolate something from u_function
+    }
+
 
     // Create CUDA events for timing
     cudaEvent_t start, stop;
@@ -144,8 +178,7 @@ int main(int argc, char* argv[])
 
     for (int i = 0; i < 10; ++i)
     {
-      gemm_kernel_shared<GEMM>
-          <<<grid_size, block_dim, cublasdx::get_shared_storage_size<GEMM>()>>>(
+      gemm_kernel_shared<GEMM><<<grid_size, block_dim, cublasdx::get_shared_storage_size<GEMM>()>>>(
               a, b, c, 1.0, 0.0, c, num_dofs);
       cudaDeviceSynchronize();
     }
