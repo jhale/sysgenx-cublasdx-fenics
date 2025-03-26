@@ -122,7 +122,7 @@ int main(int argc, char* argv[])
 
     using GEMM = decltype(size + precision + type + arrangement + function + sm + block + block_dim);
 
-    auto transpose = cublasdx::Transpose<cublasdx::transpose::transposed, cublasdx::transpose::transposed, cublasdx::transpose::transposed>();
+    auto transpose = cublasdx::Transpose<cublasdx::transpose::transposed, cublasdx::transpose::non_transposed, cublasdx::transpose::non_transposed>();
     using GEMM_T = decltype(size + precision + type + arrangement + function + sm + block + block_dim + transpose);
 
     // Allocate memory
