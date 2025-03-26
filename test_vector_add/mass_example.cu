@@ -19,6 +19,7 @@ constexpr std::size_t batch_size = 64;
 constexpr std::size_t m = num_dofs;
 constexpr std::size_t n = batch_size;
 constexpr std::size_t k = num_dofs;
+constexpr std::size_t num_quadrature_points = num_dofs;
 
 constexpr std::size_t num_elements = 32 * 32 * 32 * 6;
 
@@ -72,9 +73,9 @@ __global__ void gemm_kernel_shared(const T* phi, const T* u, const T* c,
 
   __syncthreads();
 
-  T alpha1 = 1.0;
-  T beta1 = 0.0;
-  GEMM_T().execute(alpha1, a_shared_tensor, c_shared_tensor, beta1,
+  T alpha2 = 1.0;
+  T beta2 = 0.0;
+  GEMM_T().execute(alpha2, a_shared_tensor, c_shared_tensor, beta2,
                    b_shared_tensor);
 
   // Copy result back to global memory
