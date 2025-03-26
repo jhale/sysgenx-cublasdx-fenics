@@ -19,7 +19,7 @@ constexpr std::size_t m = num_dofs;
 constexpr std::size_t n = batch_size;
 constexpr std::size_t k = num_dofs;
 
-constexpr std::size_t num_elements = 1 << 20;
+constexpr std::size_t num_elements = 32 * 32 * 32 * 6;
 
 template <class GEMM, class GEMM_T>
 __global__ void gemm_kernel_shared(const T* phi, const T* u,
@@ -151,13 +151,13 @@ int main(int argc, char* argv[])
     // Initialize detJ with Jacobian determinant (Assumed to be 1 for now)
     for (int i = 0; i < detJ_size; ++i)
     {
-      detJ[i] = 1.0; // TODO: compute
+      detJ[i] = 1.0 / num_elements; // TODO: compute
     }
 
 
     // Copy u coefficients to device
     std::shared_ptr dofmap = V->dofmap();
-    auto dof_indices = dofmap->dof_indices();
+    auto [dof_indices, unrolled] = dofmap->dof_indices();
 
     for (int i = 0; i < u_size; ++i)
     {
