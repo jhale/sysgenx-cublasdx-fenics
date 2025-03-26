@@ -11,6 +11,27 @@
 #include <cublasdx.hpp>
 #include <cuda_runtime_api.h>
 
+template <int P>
+constexpr int quadrature_points()
+{
+  if constexpr (P == 1)
+    return 4;
+  else if constexpr (P == 2)
+    return 14;
+  else if constexpr (P == 3)
+    return 24;
+  else if constexpr (P == 4)
+    return 45;
+  else if constexpr (P == 5)
+    return 74;
+  else if constexpr (P == 6)
+    return 122;
+  else if constexpr (P == 7)
+    return 177;
+  else
+    return -1;
+}
+
 using T = double;
 
 constexpr int P = 4;
@@ -19,7 +40,7 @@ constexpr std::size_t batch_size = 64;
 constexpr std::size_t m = num_dofs;
 constexpr std::size_t n = batch_size;
 constexpr std::size_t k = num_dofs;
-constexpr std::size_t num_quadrature_points = num_dofs;
+constexpr std::size_t num_quadrature_points = quadrature_points<P>();
 
 constexpr std::size_t num_elements = 32 * 32 * 32 * 6;
 
@@ -59,29 +80,29 @@ __global__ void gemm_kernel_shared(const T* phi, const T* u, const T* c,
   cublasdx::copy<GEMM, alignment::b>(u_tensor, b_shared_tensor);
   cublasdx::copy_wait();
 
-  T alpha1 = 1.0;
-  T beta1 = 0.0;
-  GEMM().execute(alpha1, a_shared_tensor, b_shared_tensor, beta1,
-                 c_shared_tensor);
+  // T alpha1 = 1.0;
+  // T beta1 = 0.0;
+  // GEMM().execute(alpha1, a_shared_tensor, b_shared_tensor, beta1,
+  //                c_shared_tensor);
 
   //  Scale by Jacobian determinant
-  for (int i = thread_idx; i < num_quadrature_points * batch_size;
-       i += blockDim.x)
-  {
-    c_shared_tensor[i] = c_shared_tensor[i] * detJ[i];
-  }
+  // for (int i = thread_idx; i < num_quadrature_points * batch_size;
+  //      i += blockDim.x)
+  // {
+  //   c_shared_tensor[i] = c_shared_tensor[i] * detJ[i + detJ_offset];
+  // }
 
-  __syncthreads();
+  // __syncthreads();
 
-  T alpha2 = 1.0;
-  T beta2 = 0.0;
-  GEMM_T().execute(alpha2, a_shared_tensor, c_shared_tensor, beta2,
-                   b_shared_tensor);
+  // T alpha2 = 1.0;
+  // T beta2 = 0.0;
+  // GEMM_T().execute(alpha2, a_shared_tensor, c_shared_tensor, beta2,
+  //                  b_shared_tensor);
 
-  // Copy result back to global memory
-  auto out_global_tensor
-      = cublasdx::make_tensor(output + c_offset, GEMM::get_layout_gmem_c());
-  cublasdx::copy<GEMM, alignment::c>(b_shared_tensor, out_global_tensor);
+  // // Copy result back to global memory
+  // auto out_global_tensor
+  //     = cublasdx::make_tensor(output + c_offset, GEMM::get_layout_gmem_c());
+  // cublasdx::copy<GEMM, alignment::c>(b_shared_tensor, out_global_tensor);
 }
 
 int main(int argc, char* argv[])
@@ -108,6 +129,9 @@ int main(int argc, char* argv[])
 
     auto [table, shape] = element.tabulate(1, x, {weights.size(), 3});
 
+    assert(shape[0] == num_quadrature_points);
+    assert(shape[1] == num_dofs);
+
     auto V
         = std::make_shared<fem::FunctionSpace<T>>(fem::create_functionspace<T>(
             mesh, std::make_shared<fem::FiniteElement<T>>(element)));
@@ -125,26 +149,26 @@ int main(int argc, char* argv[])
           return {f, {f.size()}};
         });
 
-    auto arrangement
-        = cublasdx::Arrangement<cublasdx::row_major, cublasdx::row_major,
-                                cublasdx::row_major>();
-    auto size = cublasdx::Size<m, n, k>();
-    auto precision = cublasdx::Precision<T>();
-    auto type = cublasdx::Type<cublasdx::type::real>();
-    auto function = cublasdx::Function<cublasdx::function::MM>();
-    auto sm = cublasdx::SM<Arch>();
-    auto block = cublasdx::Block();
     constexpr int block_size = 256;
-    auto block_dim = cublasdx::BlockDim<block_size>();
-
-    using GEMM = decltype(size + precision + type + arrangement + function + sm
-                          + block + block_dim);
-
-    auto transpose = cublasdx::Arrangement<cublasdx::arrangement::col_major,
+    using GEMM
+        = decltype(cublasdx::Size<m, n, k>() + cublasdx::Precision<T>()
+                   + cublasdx::Type<cublasdx::type::real>()
+                   + cublasdx::Arrangement<cublasdx::arrangement::row_major,
                                            cublasdx::arrangement::row_major,
-                                           cublasdx::arrangement::row_major>();
-    using GEMM_T = decltype(size + precision + type + transpose + function + sm
-                            + block + block_dim);
+                                           cublasdx::arrangement::row_major>()
+                   + cublasdx::Function<cublasdx::function::MM>()
+                   + cublasdx::SM<Arch>() + cublasdx::Block()
+                   + cublasdx::BlockDim<block_size>());
+
+    using GEMM_T
+        = decltype(cublasdx::Size<m, n, k>() + cublasdx::Precision<T>()
+                   + cublasdx::Type<cublasdx::type::real>()
+                   + cublasdx::Arrangement<cublasdx::arrangement::col_major,
+                                           cublasdx::arrangement::row_major,
+                                           cublasdx::arrangement::row_major>()
+                   + cublasdx::Function<cublasdx::function::MM>()
+                   + cublasdx::SM<Arch>() + cublasdx::Block()
+                   + cublasdx::BlockDim<block_size>());
 
     // Allocate memory
     constexpr auto num_quadrature_points = num_dofs;
@@ -178,7 +202,6 @@ int main(int argc, char* argv[])
 
     // Copy u coefficients to device
     std::shared_ptr dofmap = V->dofmap();
-    
 
     for (int i = 0; i < num_elements; ++i)
     {
@@ -202,12 +225,14 @@ int main(int argc, char* argv[])
     // Record start event
     cudaEventRecord(start);
 
+    const auto shared_size
+        = std::max<size_t>(cublasdx::get_shared_storage_size<GEMM>(),
+                           cublasdx::get_shared_storage_size<GEMM_T>());
     // Launch kernel
     for (int i = 0; i < 10; ++i)
     {
       gemm_kernel_shared<GEMM, GEMM_T>
-          <<<grid_size, block_size, cublasdx::get_shared_storage_size<GEMM>()>>>(
-              phi, u, c, detJ, c, u_size);
+          <<<grid_size, block_size, shared_size>>>(phi, u, c, detJ, c, u_size);
       cudaDeviceSynchronize();
     }
 
