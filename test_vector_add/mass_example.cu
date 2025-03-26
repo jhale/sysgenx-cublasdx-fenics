@@ -6,6 +6,7 @@
 #include <basix/quadrature.h>
 
 #include <dolfinx.h>
+#include <dolfinx/fem/Function.h>
 
 #include <cublasdx.hpp>
 #include <cuda_runtime_api.h>
@@ -36,7 +37,6 @@ __global__ void gemm_kernel_shared(const T* phi, const T* u,
   const size_t u_offset = block_idx * batch_size * num_dofs;
   const size_t c_offset = block_idx * batch_size * num_dofs;
   const size_t detJ_offset = block_idx * batch_size * num_quadrature_points;
-
 
   //  Copy tensors to shared memory
   auto phi_tensor = cublasdx::make_tensor(phi, GEMM::get_layout_gmem_a());
@@ -100,8 +100,7 @@ int main(int argc, char* argv[])
         basix::quadrature::type::Default, basix::cell::type::tetrahedron,
         basix::polyset::type::standard, 2 * P);
 
-    
-    auto [table,  ] = element.tabulate(1, points, {weights.size(), 3});
+    auto [table, shape] = element.tabulate(1, points, {weights.size(), 3});
 
     auto V = std::make_shared<fem::FunctionSpace<T>>(
         fem::create_functionspace<T>(
@@ -109,7 +108,6 @@ int main(int argc, char* argv[])
 
     auto u_function = std::make_shared<fem::Function<T>>(V);
     u_function->interpolate([](auto x) { return x[0] + x[1] + x[2]; });
-
 
     auto arrangement = cublasdx::Arrangement<cublasdx::row_major, cublasdx::row_major, cublasdx::row_major>();
     auto size = cublasdx::Size<m, n, k>();
@@ -122,8 +120,8 @@ int main(int argc, char* argv[])
 
     using GEMM = decltype(size + precision + type + arrangement + function + sm + block + block_dim);
 
-    auto transpose = cublasdx::Transpose<cublasdx::transpose::transposed, cublasdx::transpose::non_transposed, cublasdx::transpose::non_transposed>();
-    using GEMM_T = decltype(size + precision + type + arrangement + function + sm + block + block_dim + transpose);
+    auto transpose = cublasdx::Arrangement<cublasdx::arrangement::col_major, cublasdx::arrangement::row_major, cublasdx::arrangement::col_major>();
+    using GEMM_T = decltype(size + precision + type + transpose + function + sm + block + block_dim);
 
     // Allocate memory
     constexpr auto num_quadrature_points = num_dofs;
@@ -226,9 +224,10 @@ int main(int argc, char* argv[])
     cudaEventDestroy(stop);
 
     // Clean up memory
-    cudaFree(a);
-    cudaFree(b);
+    cudaFree(phi);
+    cudaFree(u);
     cudaFree(c);
+    cudaFree(detJ);
   }
 
   MPI_Finalize();
